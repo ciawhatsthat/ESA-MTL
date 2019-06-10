@@ -6,25 +6,30 @@
 # Global Definitions                     #
 #========================================#
 # Enter your SMA address and port
-$esa = 'sma.whaterver.com:nnnn'
+$esa = 'sma.whatever.com:nnnn'
+
 # Enter your auth connection string in base64 
 # $b  = [System.Text.Encoding]::UTF8.GetBytes("json:somepassword")
 # [System.Convert]::ToBase64String($b)
 # anNvbjpzb21lcGFzc3dvcmQ=
 $authstring = 'CHANGEME'
-# SMTP relay for failure alerting
+
+# SMTP relay and addresses for failure alerting
 $smtprelay = "Internal email relay for error reporting"
 $esamtlEmail = "From email for error reporting"
 $esamtlAdmin = "Admin email that would fix issues with this script"
+
+# Don't forget to create the task to run the script
 $taskname = "Enter name of scheduled task"
+
 # Enter location to store the tracking log
 $outfile = "c:\changme\pathto.csv"
-$inceptionDate = (Get-Date).AddMinutes(-16)
+
 # Enter location for the last log date text file
 $lastLogDateFile = "c:\changme\last-log-date.txt"
 
+# Get start/end date/time in correct ESA API Format, sadly only available down to the minute not seconds.
 $startdate = Get-Content -Path $lastLogDateFile
-# Get current date/time in correct ESA API Format, sadly only available down to the minute not seconds.
 $enddate = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:00.000Z")
 
 #========================================#
@@ -40,6 +45,7 @@ function esatime($passtime){
     $passtime = $passtime.ToString("yyyy-MM-ddTHH:mm:00.000Z")
     return $passtime
 }
+
 #datetime stamp for the csv for sorting
 function mtltime($passtime){
     $passtime = (($passtime.split("("))[0]).trim()
@@ -137,7 +143,9 @@ function Reset-Log
 $headers = New-Object "System.Collections.Generic.Dictionary[[String],[String]]"
 $headers.Add("Authorization", "Basic $authstring" )
 $headers.Add("Content-Type", 'application/json')
+
 # Create the query given enddate of now and start date from last known log in the MTL (-5 minutes for the possible 4 minute lag)
+# Notice the variabls $esa, $startdate, & $enddate.  The rest is specific for incoming delivered messages:
 $restquery = "http://$esa/sma/api/v2.0/message-tracking/messages?startDate=$startdate&endDate=$enddate&searchOption=messages&deliveryStatus=DELIVERED&messageDirection=incoming"
 
 # Make the API Call and read it into an object
@@ -147,9 +155,10 @@ $response = Invoke-RestMethod $restquery -Headers $headers -erroraction stop
 catch {
     #if API call fails, send alert email and stop the script from running in scheduled tasks
     Send-MailMessage -from $esamtlEmail -to $esamtlAdmin -Subject "ESA MTL API call failed - fix and re-enable Scheduled task" -SmtpServer $smtprelay
-    Disable-ScheduledTask -TaskName "ESA-MTL"
+    Disable-ScheduledTask -TaskName $taskname
 }
-# Create a log for each email recipient
+
+# Create a log entry for each email recipient
 $Data = $response.data.attributes | ForEach-Object {
      foreach ($recipients in $_.recipient){
          [PSCustomObject]@{
@@ -168,12 +177,16 @@ $Data = $response.data.attributes | ForEach-Object {
 
  # Sort the logs by date
 $messageTracesSorted = $Data | Sort-Object timestamp
+
 # Append the logs to the MTL
 $messageTracesSorted | Export-Csv $outfile -NoTypeInformation -Append
-# Kludge - read back entire file to deduplicate given that the 5 minute overlap will create them
+
+# Read back entire file to deduplicate given that the 5 minute overlap will create them
 $fixit = Import-Csv $outfile | Sort-Object * -Unique | Sort-Object timestamp
+
 # Write out the final logfile
 $fixit | Export-Csv $outfile -NoTypeInformation
+
 # Get the last log in the file and get the timestamp to write to a file to be read for next script execution
 esatime(($messageTracesSorted | Select-Object -Last 1).timestamp) | Out-File -FilePath $lastLogDateFile -Force -NoNewline
 
