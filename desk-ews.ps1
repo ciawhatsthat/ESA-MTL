@@ -12,69 +12,6 @@
 #  *Add-MailboxPermission -Identity "phish@mydomain.com" -User svc_serviceaccount -AccessRights FullAccess
 #
 #=======================================================================================================================
-
-#=======================================================================================================================#
-# Global Definitions                            #
-#=======================================================================================================================#
-#SOC mailbox
-$mb = "phish@mydomain.com"
-#see https://www.undocumented-features.com/2015/10/01/storing-powershell-credentials-in-the-local-user-registry/
-$hkcupath = "HKCU:\Software\mydomain\Credentials\o365"
-#where the SOC will move emails to be proccessed
-$startpath = '/SOC'
-#where the emails will be moved after processing
-$endpath = '/COMPLETED'
-$secureCredUserName = (Get-ItemProperty -Path $hkcupath).UserName
-$secureCredPassword = (Get-ItemProperty -Path $hkcupath).Password
-$securePassword = ConvertTo-SecureString $secureCredPassword
-#ensure that MSFT EWS is installed (https://www.microsoft.com/en-us/download/details.aspx?id=42951)
-Import-Module -name "C:\Program Files\Microsoft\Exchange\Web Services\2.2\Microsoft.Exchange.WebServices.dll"
-#set Exchange Version (https://docs.microsoft.com/en-us/exchange/client-developer/exchange-web-services/ews-schema-versions-in-exchange)
-$exchVersion = [Microsoft.Exchange.WebServices.Data.ExchangeVersion]::Exchange2013_SP1
-$exchService = New-Object Microsoft.Exchange.WebServices.Data.ExchangeService($exchVersion)
-$exchService.Url = "https://outlook.office365.com/EWS/Exchange.asmx"
-$cred = New-Object System.Net.NetworkCredential($secureCredUserName, $securePassword)
-$exchService.Credentials = $cred
-
-#use FindTargetFolder get the 2 folder locations for EWS processing
-$startfolder = FindTargetFolder($startpath)
-$completedfolder = FindTargetFolder($endpath)
-#create the query - this looks only for 1 email with an attachment
-$sfattachment = New-Object Microsoft.Exchange.WebServices.Data.SearchFilter+IsEqualTo([Microsoft.Exchange.WebServices.Data.EmailMessageSchema]::HasAttachments, $true)
-$sfcollection = New-Object Microsoft.Exchange.WebServices.Data.SearchFilter+SearchFilterCollection([Microsoft.Exchange.WebServices.Data.LogicalOperator]::And);
-$sfcollection.add($sfattachment)
-$view = New-Object -TypeName Microsoft.Exchange.WebServices.Data.ItemView -ArgumentList 1
-#pull down the email into an object from the the startfolder location
-$foundemails = $startfolder.FindItems($sfcollection,$view)
-
-#loop through each email, pull the attachment (must be in .msg format, sadly the knowbe4 button sends as .eml and it doesn't work)
-#from the attachment grab the sender, subject and date and pass that on to the ninja to start eDiscovery
-foreach ($email in $foundemails.Items){
-        $email.Load()
-        $attachments = $email.Attachments
-        foreach ($attachment in $attachments){
-        $attachment.Load()
-        $attachmentname = $attachment.FileName
-        $psender = $attachment.item.Sender.Address
-        $psubject = $attachment.Item.Subject
-        #This is specific to our environment, since we tag external with our email security appliance, YMMV
-        $psubject = $psubject.Replace("[EXTERNAL]","")
-        $psubject = $psubject.Replace("[MARKETING]","")
-        $psubject = $psubject.Replace("[BULK]","")
-        $psubject = $psubject.trim()
-        $psenton = $attachment.Item.DateTimeSent.ToString('M/d/y')
-        }
-    #mark email as read and move it to the completed folder
-    $email.IsRead = $true
-	$email.Update([Microsoft.Exchange.WebServices.Data.ConflictResolutionMode]::AlwaysOverwrite)
-	[VOID]$email.Move($completedfolder.Id)        
-    
-    #pass it on to the deskninja for processing
-    deskninja -senton $psenton -sender $psender -subject $psubject
-    }
-#clean up the variables
-Get-Variable -Exclude Session,banner | Remove-Variable -EA 0
-
 #this function uses the folder path to find the right folder and use it for processing
 Function FindTargetFolder($folderpath){
     $tftargetidroot = New-Object Microsoft.Exchange.WebServices.Data.FolderId([Microsoft.Exchange.WebServices.Data.WellKnownFolderName]::MsgFolderRoot,$mb)
@@ -314,3 +251,66 @@ $esamtlAdmin = "admins@mydomain.com"
 Remove-PSSession $Session
 Get-Variable -Exclude Session,banner | Remove-Variable -EA 0
 }
+#=======================================================================================================================#
+# Global Definitions                            #
+#=======================================================================================================================#
+#SOC mailbox
+$mb = "phish@mydomain.com"
+#see https://www.undocumented-features.com/2015/10/01/storing-powershell-credentials-in-the-local-user-registry/
+$hkcupath = "HKCU:\Software\mydomain\Credentials\o365"
+#where the SOC will move emails to be proccessed
+$startpath = '/SOC'
+#where the emails will be moved after processing
+$endpath = '/COMPLETED'
+$secureCredUserName = (Get-ItemProperty -Path $hkcupath).UserName
+$secureCredPassword = (Get-ItemProperty -Path $hkcupath).Password
+$securePassword = ConvertTo-SecureString $secureCredPassword
+#ensure that MSFT EWS is installed (https://www.microsoft.com/en-us/download/details.aspx?id=42951)
+Import-Module -name "C:\Program Files\Microsoft\Exchange\Web Services\2.2\Microsoft.Exchange.WebServices.dll"
+#set Exchange Version (https://docs.microsoft.com/en-us/exchange/client-developer/exchange-web-services/ews-schema-versions-in-exchange)
+$exchVersion = [Microsoft.Exchange.WebServices.Data.ExchangeVersion]::Exchange2013_SP1
+$exchService = New-Object Microsoft.Exchange.WebServices.Data.ExchangeService($exchVersion)
+$exchService.Url = "https://outlook.office365.com/EWS/Exchange.asmx"
+$cred = New-Object System.Net.NetworkCredential($secureCredUserName, $securePassword)
+$exchService.Credentials = $cred
+
+#use FindTargetFolder get the 2 folder locations for EWS processing
+$startfolder = FindTargetFolder($startpath)
+$completedfolder = FindTargetFolder($endpath)
+#create the query - this looks only for 1 email with an attachment
+$sfattachment = New-Object Microsoft.Exchange.WebServices.Data.SearchFilter+IsEqualTo([Microsoft.Exchange.WebServices.Data.EmailMessageSchema]::HasAttachments, $true)
+$sfcollection = New-Object Microsoft.Exchange.WebServices.Data.SearchFilter+SearchFilterCollection([Microsoft.Exchange.WebServices.Data.LogicalOperator]::And);
+$sfcollection.add($sfattachment)
+$view = New-Object -TypeName Microsoft.Exchange.WebServices.Data.ItemView -ArgumentList 1
+#pull down the email into an object from the the startfolder location
+$foundemails = $startfolder.FindItems($sfcollection,$view)
+
+#loop through each email, pull the attachment (must be in .msg format, sadly the knowbe4 button sends as .eml and it doesn't work)
+#from the attachment grab the sender, subject and date and pass that on to the ninja to start eDiscovery
+foreach ($email in $foundemails.Items){
+        $email.Load()
+        $attachments = $email.Attachments
+        foreach ($attachment in $attachments){
+        $attachment.Load()
+        $attachmentname = $attachment.FileName
+        $psender = $attachment.item.Sender.Address
+        $psubject = $attachment.Item.Subject
+        #This is specific to our environment, since we tag external with our email security appliance, YMMV
+        $psubject = $psubject.Replace("[EXTERNAL]","")
+        $psubject = $psubject.Replace("[MARKETING]","")
+        $psubject = $psubject.Replace("[BULK]","")
+        $psubject = $psubject.trim()
+        $psenton = $attachment.Item.DateTimeSent.ToString('M/d/y')
+        }
+    #mark email as read and move it to the completed folder
+    $email.IsRead = $true
+	$email.Update([Microsoft.Exchange.WebServices.Data.ConflictResolutionMode]::AlwaysOverwrite)
+	[VOID]$email.Move($completedfolder.Id)        
+    
+    #pass it on to the deskninja for processing
+    deskninja -senton $psenton -sender $psender -subject $psubject
+    }
+#clean up the variables
+Get-Variable -Exclude Session,banner | Remove-Variable -EA 0
+
+
